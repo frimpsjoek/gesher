@@ -683,3 +683,41 @@ enum AlignItems: AgentOperation {
             items: result.items.map(Item.init), sync: context.writer.lastWriteSync)
     }
 }
+
+enum MoveItems: AgentOperation {
+    struct Input: Decodable, Sendable {
+        var board: String
+        var moves: [FreeformWriter.ItemMove]
+        var ifRevision: String?
+    }
+
+    static let path = ["items", "move"]
+    static let summary = "Move/resize many items in one native write (one save, one undo group): exact layouts without GUI."
+    static let effect = OperationEffect.write
+    static let idempotent = true
+    static let params: [Param] = [
+        .string("board", "Board title or id.", required: true, positional: true),
+        Param(
+            "moves", .array(.object),
+            "JSON array of {item, x, y, width?, height?}; x/y are the item's top-left canvas point.",
+            required: true),
+        .string("ifRevision", "Only save if the board still matches this revision."),
+    ]
+    static let examples = [
+        #"items move 'Moodboard' --moves '[{"item":"00000000-0000-0000-0000-000000000001","x":0,"y":0},{"item":"00000000-0000-0000-0000-000000000002","x":270,"y":0}]'"#
+    ]
+
+    static func validate(_ input: Input) throws {
+        guard !input.moves.isEmpty else { throw AgentError.invalid("moves must not be empty.") }
+        for m in input.moves where UUID(uuidString: m.item) == nil {
+            throw AgentError.invalid("Invalid item UUID '\(m.item)'.")
+        }
+    }
+
+    static func run(_ input: Input, _ context: FreeformContext) throws -> ItemsMutationOutput {
+        let result = try context.writer.moveItems(board: input.board, moves: input.moves, ifRevision: input.ifRevision)
+        return ItemsMutationOutput(
+            board: result.board.id, title: result.board.title, revision: result.board.revision,
+            items: result.items.map(Item.init), sync: context.writer.lastWriteSync)
+    }
+}

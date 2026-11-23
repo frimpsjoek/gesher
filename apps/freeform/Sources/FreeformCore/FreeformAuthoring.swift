@@ -1832,6 +1832,65 @@ public final class FreeformWriter: @unchecked Sendable {
         }
     }
 
+    /// One absolute placement for `moveItems`. `x`/`y` are the item's top-left canvas geometry in points;
+    /// `width`/`height` default to the item's current size.
+    public struct ItemMove: Decodable, Sendable {
+        public var item: String
+        public var x: Double
+        public var y: Double
+        public var width: Double?
+        public var height: Double?
+        public init(item: String, x: Double, y: Double, width: Double? = nil, height: Double? = nil) {
+            self.item = item; self.x = x; self.y = y; self.width = width; self.height = height
+        }
+    }
+
+    /// Moves (and optionally resizes) many items in ONE native write: one store open, one undo group,
+    /// one save, and at most one Freeform close/reopen.
+    public func moveItems(board selector: String, moves: [ItemMove], ifRevision: String? = nil) throws
+        -> FreeformItemsWriteResult
+    {
+        guard !moves.isEmpty else { throw AgentError.invalid("moves must contain at least one item.") }
+        var seen = Set<String>()
+        let parsed = try moves.map { m -> (UUID, ItemMove) in
+            guard let uuid = UUID(uuidString: m.item) else { throw AgentError.invalid("Invalid item id '\(m.item)'.") }
+            guard seen.insert(uuid.uuidString).inserted else { throw AgentError.invalid("Item '\(m.item)' is listed twice.") }
+            try validateFinite(m.x, name: "x"); try validateFinite(m.y, name: "y")
+            if let w = m.width { try validateFinite(w, name: "width", positive: true) }
+            if let h = m.height { try validateFinite(h, name: "height", positive: true) }
+            return (uuid, m)
+        }
+        return try withBoardWrite(selector, ifRevision: ifRevision) { location, _, boardUUID in
+            let bridge = try bridgeFactory()
+            let boardsDir = location.database.deletingLastPathComponent()
+            try bridge.withStore(at: boardsDir) { nativeStore in
+                let board = try bridge.loadBoard(in: nativeStore, id: boardUUID)
+                let cc = bridge.makeCommandController(for: board)
+                // Resolve and validate everything before enqueuing anything (all-or-nothing).
+                let resolved: [(AnyObject, Double, Double, Double, Double, Double)] = try parsed.map { uuid, m in
+                    guard let obj = bridge.getObjectArg(board, "getBoardItemForUUID:", uuid as NSUUID) else {
+                        throw AgentError.notFound("item", uuid.uuidString)
+                    }
+                    try requireUnlocked(obj, id: uuid.uuidString, bridge: bridge)
+                    guard let r = bridge.itemGeometryRect(obj) else {
+                        throw AgentError.invalid("Item '\(uuid.uuidString)' has no canvas geometry.")
+                    }
+                    return (obj, m.x, m.y, m.width ?? r.width, m.height ?? r.height, r.angle)
+                }
+                bridge.withCommandGroup(on: cc) {
+                    for (obj, x, y, w, h, a) in resolved {
+                        let geom = bridge.makeGeometry(x: x, y: y, width: w, height: h, angle: a)
+                        bridge.enqueue(bridge.makeSetGeometryCommand(item: obj, geometry: geom), on: cc)
+                    }
+                }
+                try bridge.saveBoard(board)
+            }
+            let (readback, allItems) = try readbackBoard(boardUUID.uuidString, at: location)
+            let idSet = Set(parsed.map { $0.0.uuidString })
+            return FreeformItemsWriteResult(board: readback, items: allItems.filter { idSet.contains($0.id) })
+        }
+    }
+
     // MARK: - Batch Diagram Authoring
 
     public func createDiagram(board selector: String, spec: FreeformDiagramSpec, ifRevision: String? = nil) throws

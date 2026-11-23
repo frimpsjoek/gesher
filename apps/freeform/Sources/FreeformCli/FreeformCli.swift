@@ -71,6 +71,7 @@ enum FreeformApp {
                 AnyOperation(GroupItems.self),
                 AnyOperation(UngroupItems.self),
                 AnyOperation(AlignItems.self),
+                AnyOperation(MoveItems.self),
                 AnyOperation(CreateDiagram.self),
             ],
             context: context)
