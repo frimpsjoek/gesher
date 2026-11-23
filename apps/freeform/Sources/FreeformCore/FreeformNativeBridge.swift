@@ -114,7 +114,30 @@ public final class FreeformNativeBridge: @unchecked Sendable {
             boardCRDTDataMetadataAccessor: 0xde3594,
             insertStyleCopyHelper: 0x66f874,
             insertStyleTypeAccessor: 0xde3ee0
-        )
+        ),
+        // macOS 27.3 (26C5047e), Freeform 5.2 (656.60.8). Derived statically against the 5.0 build
+        // (masked-instruction fingerprints, log-string anchors, Swift vtables and type descriptors).
+        // makeNewBoard is not yet verified (0 = native board creation disabled for this build).
+        "C5ED2770-4076-377E-97F6-C49FD8EFB724": Offsets(
+            version: "5.2 (656.60.8)",
+            storeInit: 0x88c2e4,
+            fetchBoards: 0x81b234,
+            makeNewBoard: 0,
+            allocInitBoard: 0x13b2ccc,
+            makeTransaction: 0x13ed02c,
+            markNewBoard: 0x69ccd8,
+            mergeDatabaseChanges: 0x139d158,
+            appendPendingChanges: 0x6edbc8,
+            transactionCommitVtableOffset: 0x2f8,
+            setFavorite: 0x81fc00,
+            setCanvasDotGrid: 0x822a34,
+            setConnectorMode: 0x8230e8,
+            deleteBoard: 0x810bcc,
+            undeleteBoard: 0x813398,
+            boardCRDTDataMetadataAccessor: 0xf87658,
+            insertStyleCopyHelper: 0x673878,
+            insertStyleTypeAccessor: 0xf87f60
+        ),
     ]
 
     private static let lock = NSLock()
@@ -296,7 +319,8 @@ public final class FreeformNativeBridge: @unchecked Sendable {
         try requireSelector(factoryClass, "makeTextboxItemWithAttributedString:")
         try requireSelector(factoryClass, "makeShapeItemWithShapeType:")
         try requireSelector(factoryClass, "makeStickyNoteItemWithAttributedString:")
-        try requireSelector(factoryClass, "makeTableItemWithRowCount:columnCount:geometry:")
+        // Freeform 5.2 renamed this to makeTableItemWithRowCount:columnCount:geometry:textProvenance:;
+        // table creation checks lazily (makeTable) so the rest of native authoring stays available.
         try requireSelector(tableProviderClass, "initWithAttributedString:geometry:")
         try requireSelector(tableProviderClass, "provideBoardItemWithFactory:completionHandler:")
         try requireSelector(factoryClass, "makeDuplicateOfBoardItems:")
@@ -500,6 +524,11 @@ public final class FreeformNativeBridge: @unchecked Sendable {
 
     /// Creates a new board inside `store` with both root containers initialized for persistence.
     func createBoard(in store: AnyObject, title: String) throws -> (board: AnyObject, id: UUID) {
+        guard offsets.makeNewBoard != 0 else {
+            throw PlatformError.unsupportedPrivateAPI(
+                selector: "CRLBoardDataStore.makeNewBoard",
+                reason: "Native board creation is not verified for Freeform \(offsets.version); use import-inbox creation.")
+        }
         let boardUUID = UUID()
         let emptyOwner = ""
         let ownerWords = withUnsafeBytes(of: emptyOwner) { $0.load(as: (UInt, UInt).self) }
@@ -860,7 +889,12 @@ public final class FreeformNativeBridge: @unchecked Sendable {
             attributedText)
     }
 
-    func makeTable(factory: AnyObject, rows: Int, columns: Int, geometry: AnyObject) -> AnyObject {
+    func makeTable(factory: AnyObject, rows: Int, columns: Int, geometry: AnyObject) throws -> AnyObject {
+        let sel = NSSelectorFromString("makeTableItemWithRowCount:columnCount:geometry:")
+        guard class_getInstanceMethod(factoryClass, sel) != nil else {
+            throw PlatformError.missingSelector(
+                className: NSStringFromClass(factoryClass), selector: "makeTableItemWithRowCount:columnCount:geometry:")
+        }
         typealias Fn = @convention(c) (AnyObject, Selector, Int, Int, AnyObject) -> AnyObject
         return unsafeBitCast(msgSend, to: Fn.self)(
             factory, NSSelectorFromString("makeTableItemWithRowCount:columnCount:geometry:"), rows, columns, geometry)

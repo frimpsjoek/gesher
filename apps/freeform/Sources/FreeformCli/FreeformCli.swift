@@ -181,6 +181,7 @@ enum FreeformDoctor: AgentOperation {
             groupContainerReadable: readable, store: location?.kind.rawValue,
             storeModifiedAt: location.flatMap { lastModified($0.database) }.map { DateOutput.iso($0) }, model: model,
             authoring: authoringLabel,
+            authoringDetail: { if case .unavailable(let r) = authoringStatus { return r }; return nil }(),
             capabilities: DoctorCapabilities(
                 supported: authoringStatus.isAvailable
                     ? [
@@ -231,6 +232,7 @@ struct DoctorOutput: Encodable, Sendable {
     let model: String
     /// `native`, `native_paused_app_running`, `unsupported_build` or `unavailable`.
     let authoring: String
+    let authoringDetail: String?
     let capabilities: DoctorCapabilities
     let hint: String?
 }
